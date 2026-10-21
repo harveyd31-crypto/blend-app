@@ -1,23 +1,42 @@
 package com.harvey.blend
 
+import android.Manifest
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.DocumentsContract
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import com.harvey.blend.ui.BlendRoot
+import com.harvey.blend.ui.BlendTheme
 
 class MainActivity : ComponentActivity() {
+
+    private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+        if (uri != null) {
+            val name = runCatching { DocumentsContract.getTreeDocumentId(uri).substringAfter(':').ifBlank { "Music" } }.getOrNull()
+            repo.setMusicFolder(uri, name)
+        }
+    }
+
+    private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= 33) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         setContent {
-            Box(Modifier.fillMaxSize().background(Color(0xFF121212)), contentAlignment = Alignment.Center) {
-                Text("Blend", color = Color.White)
+            BlendTheme {
+                BlendRoot(onPickFolder = { pickFolder.launch(null) })
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Pick up files added to the folder since last time.
+        repo.rescan(force = false)
     }
 }
