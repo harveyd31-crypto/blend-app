@@ -9,6 +9,7 @@
     <application
         android:name=".BlendApp"
         android:allowBackup="true"
+        android:largeHeap="true"
         android:icon="@drawable/ic_launcher"
         android:roundIcon="@drawable/ic_launcher"
         android:label="Blend"
