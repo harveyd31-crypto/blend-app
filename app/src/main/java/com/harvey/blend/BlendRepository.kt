@@ -97,18 +97,6 @@ class BlendRepository(private val context: Context) {
     )
     val mix: StateFlow<MixState> = engine.state
 
-    init {
-        val snap = store.load()
-        _tracks.value = snap.tracks.associateBy { it.id }
-        _playlists.value = snap.playlists
-        _settings.value = snap.settings
-        engine.bars = snap.settings.transitionBars
-        engine.style = snap.settings.transitionStyle
-        engine.start()
-        startAnalysisQueue()
-        loadStarterLibrary()
-    }
-
     // ---- Persistence -------------------------------------------------------------------------------
 
     private var saveJob: Job? = null
@@ -576,6 +564,20 @@ class BlendRepository(private val context: Context) {
         runCatching {
             if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(i) else context.startService(i)
         }
+    }
+
+    // Must stay at the very end of the class: Kotlin runs property initialisers and init blocks in
+    // order, so everything above has to exist before background work starts.
+    init {
+        val snap = store.load()
+        _tracks.value = snap.tracks.associateBy { it.id }
+        _playlists.value = snap.playlists
+        _settings.value = snap.settings
+        engine.bars = snap.settings.transitionBars
+        engine.style = snap.settings.transitionStyle
+        engine.start()
+        startAnalysisQueue()
+        runCatching { loadStarterLibrary() }
     }
 }
 
