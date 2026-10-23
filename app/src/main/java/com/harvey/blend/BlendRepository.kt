@@ -47,6 +47,8 @@ data class LibraryProgress(
     val lastScanAudio: Int? = null,
     val lastScanOther: Int = 0,
     val scanError: String? = null,
+    /** What's happening right now (e.g. a Drive download), shown in the progress card. */
+    val status: String? = null,
     val found: Int = 0,
     val toAnalyze: Int = 0,
     val analyzed: Int = 0,
@@ -220,6 +222,46 @@ class BlendRepository(private val context: Context) {
                 }
             }
             _progress.update { it.copy(scanning = false) }
+            rescan(force = true)
+        }
+    }
+
+    /** Downloads the songs of a public Google Drive folder (or one file) into Blend's storage. */
+    fun importFromDrive(link: String) {
+        scope.launch {
+            _progress.update { it.copy(scanning = true, found = 0, scanError = null, status = "Opening Drive link…") }
+            val dir = LibraryScanner.importDir(context)
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val folder = com.harvey.blend.library.DriveImporter.folderId(link)
+                    val files = if (folder != null) com.harvey.blend.library.DriveImporter.listFolder(folder)
+                    else {
+                        val id = com.harvey.blend.library.DriveImporter.fileId(link)
+                            ?: throw IllegalArgumentException("That doesn't look like a Google Drive link.")
+                        listOf(com.harvey.blend.library.DriveImporter.DriveFile(id, ""))
+                    }
+                    if (files.isEmpty()) throw IllegalStateException("No music files found in that Drive folder.")
+                    var ok = 0
+                    val failed = ArrayList<String>()
+                    files.forEachIndexed { i, f ->
+                        _progress.update { it.copy(status = "Downloading ${i + 1} of ${files.size}: ${f.name.ifBlank { "song" }}", found = ok) }
+                        runCatching { com.harvey.blend.library.DriveImporter.download(f.id, dir, f.name.ifBlank { null }) }
+                            .onSuccess { ok++ }
+                            .onFailure { failed += f.name.ifBlank { f.id } }
+                    }
+                    if (ok == 0) throw IllegalStateException("Couldn't download any song. Check the link is shared with “Anyone with the link”.")
+                    ok to failed
+                }
+            }
+            result.fold(
+                onSuccess = { (ok, failed) ->
+                    _progress.update {
+                        it.copy(scanning = false, status = null,
+                            scanError = if (failed.isEmpty()) null else "Downloaded $ok songs; ${failed.size} failed: ${failed.take(3).joinToString()}")
+                    }
+                },
+                onFailure = { e -> _progress.update { it.copy(scanning = false, status = null, scanError = e.message ?: "Drive download failed.") } },
+            )
             rescan(force = true)
         }
     }

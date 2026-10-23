@@ -77,7 +77,10 @@ fun LibraryScreen(
     var filter by rememberSaveable(initialFilter) { mutableStateOf(initialFilter) }
     var showCreate by remember { mutableStateOf(false) }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> repo.importSongs(uris) }
-    val importSongs = { importer.launch(arrayOf("audio/*")) }
+    val pickFiles = { importer.launch(arrayOf("audio/*")) }
+    var importMenu by remember { mutableStateOf(false) }
+    var driveDialog by remember { mutableStateOf(false) }
+    val importSongs = { importMenu = true }
 
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -86,7 +89,10 @@ fun LibraryScreen(
             }
             Spacer(Modifier.width(12.dp))
             Text(if (filter == LibraryFilter.SMART_SETS && initialFilter == LibraryFilter.SMART_SETS) "Set maker" else "Your Library", style = Type.title, color = Color.White, modifier = Modifier.weight(1f))
-            RoundIconButton(Icons.Rounded.LibraryAdd, "Import songs", size = 44.dp) { importSongs() }
+            Box {
+                RoundIconButton(Icons.Rounded.LibraryAdd, "Import songs", size = 44.dp) { importSongs() }
+                ImportMenu(importMenu, onDismiss = { importMenu = false }, onFiles = { importMenu = false; pickFiles() }, onDrive = { importMenu = false; driveDialog = true })
+            }
             RoundIconButton(Icons.Rounded.Search, "Search", size = 44.dp) { nav.push(Dest.Search) }
             RoundIconButton(Icons.Rounded.Add, "New playlist or smart set", size = 44.dp) { showCreate = true }
         }
@@ -98,6 +104,11 @@ fun LibraryScreen(
         }
 
         if (progress.active) AnalysisCard(progress, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        if (progress.scanError != null && tracks.isNotEmpty()) Text(
+            progress.scanError!!, style = Type.caption, color = Blend.Yellow,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        if (driveDialog) DriveLinkDialog(onDismiss = { driveDialog = false }) { link -> driveDialog = false; repo.importFromDrive(link) }
 
         if (settings.musicFolderUri == null && tracks.isEmpty() && !progress.scanning) {
             EmptyHint(
@@ -105,9 +116,12 @@ fun LibraryScreen(
                 "Import songs from Downloads, Drive or anywhere on the phone (AIFF, WAV, FLAC, MP3, M4A) — or choose a folder that holds your whole library. Blend analyses BPM, key, energy and cue points.",
                 Modifier.fillMaxWidth(),
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PrimaryButton("Import songs", onClick = importSongs)
-                    PrimaryButton("Choose folder", color = Color.White, onClick = onPickFolder)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    PrimaryButton("From a Google Drive link") { driveDialog = true }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        PrimaryButton("Import files", color = Color.White, onClick = pickFiles)
+                        PrimaryButton("Choose folder", color = Color.White, onClick = onPickFolder)
+                    }
                 }
             }
             return@Column
@@ -123,8 +137,8 @@ fun LibraryScreen(
             }
             EmptyHint("No music found yet", body, Modifier.fillMaxWidth()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PrimaryButton("Import songs", onClick = importSongs)
-                    PrimaryButton("Rescan", color = Color.White) { repo.rescan() }
+                    PrimaryButton("Google Drive link") { driveDialog = true }
+                    PrimaryButton("Import files", color = Color.White, onClick = pickFiles)
                 }
             }
             return@Column
@@ -188,7 +202,7 @@ fun AnalysisCard(p: com.harvey.blend.LibraryProgress, modifier: Modifier = Modif
     ) {
         Icon(Icons.Rounded.GraphicEq, null, tint = Blend.Blue)
         Column(Modifier.weight(1f)) {
-            val title = if (p.scanning) "Adding music… ${p.found} files" else "Analysing ${p.toAnalyze - p.analyzed} tracks"
+            val title = if (p.status != null) p.status else if (p.scanning) "Adding music… ${p.found} files" else "Analysing ${p.toAnalyze - p.analyzed} tracks"
             Text(title, style = Type.bodySmall.copy(fontWeight = FontWeight.SemiBold), color = Color.White)
             Spacer(Modifier.height(6.dp))
             LinearProgressIndicator(
@@ -318,6 +332,32 @@ fun CreatePlaylistDialog(defaultKind: PlaylistKind, onDismiss: () -> Unit, onCre
             }
         },
         confirmButton = { TextButton(onClick = { onCreate(name, kind) }) { Text("Create", color = Blend.Orange) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = Blend.Sub) } },
+    )
+}
+
+@Composable
+private fun ImportMenu(open: Boolean, onDismiss: () -> Unit, onFiles: () -> Unit, onDrive: () -> Unit) {
+    androidx.compose.material3.DropdownMenu(open, onDismiss, containerColor = Blend.Raised) {
+        androidx.compose.material3.DropdownMenuItem(text = { Text("From a Google Drive link", color = Color.White) }, onClick = onDrive)
+        androidx.compose.material3.DropdownMenuItem(text = { Text("Files on this phone", color = Color.White) }, onClick = onFiles)
+    }
+}
+
+@Composable
+private fun DriveLinkDialog(onDismiss: () -> Unit, onImport: (String) -> Unit) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var link by remember { mutableStateOf(clipboard.getText()?.text?.takeIf { "drive.google" in it } ?: "") }
+    AlertDialog(
+        onDismissRequest = onDismiss, containerColor = Blend.Card,
+        title = { Text("Import from Google Drive", style = Type.heading, color = Color.White) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Paste the link of a Drive folder (or one song) shared as “Anyone with the link”. Blend downloads the music files into the app.", style = Type.caption, color = Blend.Sub)
+                OutlinedTextField(link, { link = it }, singleLine = true, placeholder = { Text("https://drive.google.com/drive/folders/…") }, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = { TextButton(enabled = link.isNotBlank(), onClick = { onImport(link.trim()) }) { Text("Download", color = Blend.Orange) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = Blend.Sub) } },
     )
 }
