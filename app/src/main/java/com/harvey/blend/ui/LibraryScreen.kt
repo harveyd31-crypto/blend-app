@@ -113,9 +113,11 @@ fun LibraryScreen(
         if (settings.musicFolderUri == null && tracks.isEmpty() && !progress.scanning) {
             EmptyHint(
                 "Add your music",
-                "Import songs from Downloads, Drive or anywhere on the phone (AIFF, WAV, FLAC, MP3, M4A) — or choose a folder that holds your whole library. Blend analyses BPM, key, energy and cue points.",
+                (progress.scanError?.let { "⚠ $it\n\n" } ?: "") +
+                    "Import songs from Google Drive, Downloads or anywhere on the phone (AIFF, WAV, FLAC, MP3, M4A) — or choose a folder that holds your whole library.",
                 Modifier.fillMaxWidth(),
             ) {
+                PrimaryButton("Download my trial songs") { repo.importFromDrive(com.harvey.blend.STARTER_DRIVE_LINK) }
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     PrimaryButton("From a Google Drive link") { driveDialog = true }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

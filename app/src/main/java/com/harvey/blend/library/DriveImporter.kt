@@ -29,9 +29,10 @@ object DriveImporter {
     fun listFolder(folderId: String, depth: Int = 2): List<DriveFile> {
         val html = fetchText("https://drive.google.com/embeddedfolderview?id=$folderId#list")
         if ("flip-entry" !in html) {
-            throw DriveException("Can't open this Drive folder. In Drive, set sharing to “Anyone with the link”.")
+            throw DriveException("Can't open the Drive folder. In Drive, set its sharing to “Anyone with the link”.")
         }
         val out = ArrayList<DriveFile>()
+        val seen = HashSet<String>()
         // Each entry: <div class="flip-entry" id="entry-ID"> … <a href="…"> … <div class="flip-entry-title">NAME</div>
         val entry = Regex("""id="entry-([\w-]+)"[\s\S]*?href="([^"]+)"[\s\S]*?class="flip-entry-title">([\s\S]*?)</div>""")
         for (m in entry.findAll(html)) {
@@ -40,7 +41,7 @@ object DriveImporter {
             val name = unescape(m.groupValues[3].trim())
             if ("/folders/" in href) {
                 if (depth > 0) out += listFolder(id, depth - 1)
-            } else if (name.substringAfterLast('.', "").lowercase() in LibraryScanner.AUDIO_EXT) {
+            } else if (name.substringAfterLast('.', "").lowercase() in LibraryScanner.AUDIO_EXT && seen.add(id)) {
                 out += DriveFile(id, name)
             }
         }

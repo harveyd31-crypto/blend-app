@@ -106,6 +106,7 @@ class BlendRepository(private val context: Context) {
         engine.style = snap.settings.transitionStyle
         engine.start()
         startAnalysisQueue()
+        loadStarterLibrary()
     }
 
     // ---- Persistence -------------------------------------------------------------------------------
@@ -226,8 +227,23 @@ class BlendRepository(private val context: Context) {
         }
     }
 
+    /**
+     * First launch with an empty library: download David's trial folder from Google Drive so the
+     * app has music to work with straight away. Runs once (and again if it failed).
+     */
+    private fun loadStarterLibrary() {
+        val prefs = context.getSharedPreferences("blend", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("starterDone", false)) return
+        if (_tracks.value.isNotEmpty() || LibraryScanner.scanImported(context).isNotEmpty()) {
+            prefs.edit().putBoolean("starterDone", true).apply()
+            if (_tracks.value.isEmpty()) rescan(force = true)
+            return
+        }
+        importFromDrive(STARTER_DRIVE_LINK) { ok -> if (ok) prefs.edit().putBoolean("starterDone", true).apply() }
+    }
+
     /** Downloads the songs of a public Google Drive folder (or one file) into Blend's storage. */
-    fun importFromDrive(link: String) {
+    fun importFromDrive(link: String, onDone: (Boolean) -> Unit = {}) {
         scope.launch {
             _progress.update { it.copy(scanning = true, found = 0, scanError = null, status = "Opening Drive link…") }
             val dir = LibraryScanner.importDir(context)
@@ -260,8 +276,16 @@ class BlendRepository(private val context: Context) {
                             scanError = if (failed.isEmpty()) null else "Downloaded $ok songs; ${failed.size} failed: ${failed.take(3).joinToString()}")
                     }
                 },
-                onFailure = { e -> _progress.update { it.copy(scanning = false, status = null, scanError = e.message ?: "Drive download failed.") } },
+                onFailure = { e ->
+                    _progress.update {
+                        it.copy(scanning = false, status = null, scanError = when (e) {
+                            is java.net.UnknownHostException -> "No internet connection — couldn't reach Google Drive."
+                            else -> e.message ?: "Drive download failed."
+                        })
+                    }
+                },
             )
+            onDone(result.isSuccess)
             rescan(force = true)
         }
     }
@@ -554,6 +578,9 @@ class BlendRepository(private val context: Context) {
         }
     }
 }
+
+/** Trial library: a shared Google Drive folder downloaded on first launch. */
+const val STARTER_DRIVE_LINK = "https://drive.google.com/drive/folders/1_OODXYnKwuh9UWl07SGzMF7fDiWjG9MF"
 
 enum class ExportFormat(val label: String, val ext: String, val mime: String) {
     REKORDBOX("Rekordbox XML", "xml", "text/xml"),
