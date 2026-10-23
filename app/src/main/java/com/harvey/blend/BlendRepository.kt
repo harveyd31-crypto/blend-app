@@ -43,6 +43,10 @@ import java.util.UUID
 
 data class LibraryProgress(
     val scanning: Boolean = false,
+    /** Outcome of the last scan, shown when the library is empty. */
+    val lastScanAudio: Int? = null,
+    val lastScanOther: Int = 0,
+    val scanError: String? = null,
     val found: Int = 0,
     val toAnalyze: Int = 0,
     val analyzed: Int = 0,
@@ -139,15 +143,29 @@ class BlendRepository(private val context: Context) {
     fun rescan(force: Boolean = true) {
         val folder = _settings.value.musicFolderUri ?: return
         if (scanJob?.isActive == true) return
-        if (!force && System.currentTimeMillis() - lastScan < 5 * 60_000) return
+        // An empty library is always worth another look (e.g. files copied after choosing the folder).
+        if (!force && _tracks.value.isNotEmpty() && System.currentTimeMillis() - lastScan < 5 * 60_000) return
         lastScan = System.currentTimeMillis()
         scanJob = scope.launch {
-            _progress.update { it.copy(scanning = true, found = 0) }
-            val found = withContext(Dispatchers.IO) {
+            _progress.update { it.copy(scanning = true, found = 0, scanError = null) }
+            val result = withContext(Dispatchers.IO) {
                 runCatching {
                     LibraryScanner.scan(context, Uri.parse(folder)) { n -> _progress.update { p -> p.copy(found = n) } }
-                }.getOrDefault(emptyList())
+                }
             }
+            val scan = result.getOrNull()
+            if (scan == null) {
+                val err = result.exceptionOrNull()
+                _progress.update {
+                    it.copy(scanning = false, scanError = when (err) {
+                        is SecurityException -> "Blend lost permission to read this folder. Choose it again."
+                        else -> err?.message ?: "Couldn't read the folder."
+                    })
+                }
+                return@launch
+            }
+            _progress.update { it.copy(lastScanAudio = scan.audio.size, lastScanOther = scan.otherFiles) }
+            val found = scan.audio
             val existing = _tracks.value
             val now = System.currentTimeMillis()
             val merged = LinkedHashMap<String, Track>()

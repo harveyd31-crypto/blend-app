@@ -102,6 +102,23 @@ fun LibraryScreen(
             return@Column
         }
 
+        if (tracks.isEmpty() && !progress.scanning) {
+            val body = when {
+                progress.scanError != null -> progress.scanError!!
+                progress.lastScanAudio == 0 && progress.lastScanOther > 0 ->
+                    "Found ${progress.lastScanOther} files in “${settings.musicFolderName}”, but none are music files (AIFF, WAV, FLAC, MP3, M4A, OGG)."
+                progress.lastScanAudio == 0 -> "“${settings.musicFolderName}” is empty. Copy your music into it, then tap Rescan."
+                else -> "Tap Rescan to look for music in “${settings.musicFolderName}”."
+            }
+            EmptyHint("No music found yet", body, Modifier.fillMaxWidth()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PrimaryButton("Rescan") { repo.rescan() }
+                    PrimaryButton("Choose another folder", color = Color.White, onClick = onPickFolder)
+                }
+            }
+            return@Column
+        }
+
         val all = tracks
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 160.dp)) {
             when (filter) {

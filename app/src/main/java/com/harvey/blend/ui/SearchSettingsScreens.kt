@@ -89,6 +89,16 @@ fun SearchScreen(showBack: Boolean) {
                     Sort.ADDED -> compareByDescending<Track> { it.addedAt }
                 }
             ).toList()
+        if (list.isEmpty()) {
+            if (tracks.isEmpty()) EmptyHint("Your library is empty", "Blend hasn't found any music yet. Check the folder in Library, then tap Rescan.") {
+                PrimaryButton("Go to Library") { nav.tab(Dest.Library) }
+            } else EmptyHint(
+                "No match",
+                if (mixesWithNow) "Nothing in your ${tracks.size} tracks mixes cleanly with the current one. Turn off the “Mixes with” filter to see everything."
+                else "None of your ${tracks.size} tracks match “$query”.",
+            )
+            return@Column
+        }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 170.dp)) {
             itemsIndexed(list, key = { _, t -> t.id }) { _, t ->
                 TrackListRow(t, queue.currentId == t.id, onClick = { nav.push(Dest.TrackView(t.id)) }, onPlay = {

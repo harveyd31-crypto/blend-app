@@ -8,12 +8,17 @@ import java.security.MessageDigest
 /** A music file found in the user's folder. */
 data class FoundFile(val uri: Uri, val relativePath: String, val name: String, val size: Long, val modified: Long)
 
+/** Result of a folder scan: the audio files plus how many other files were seen. */
+data class ScanResult(val audio: List<FoundFile>, val otherFiles: Int, val folders: Int)
+
 /** Walks the folder the user picked (Storage Access Framework) and lists audio files. */
 object LibraryScanner {
     val AUDIO_EXT = setOf("mp3", "aif", "aiff", "wav", "flac", "m4a", "aac", "alac", "ogg", "opus")
 
-    fun scan(context: Context, treeUri: Uri, onFound: (Int) -> Unit = {}): List<FoundFile> {
+    fun scan(context: Context, treeUri: Uri, onFound: (Int) -> Unit = {}): ScanResult {
         val out = ArrayList<FoundFile>()
+        var other = 0
+        var folders = 0
         val rootId = DocumentsContract.getTreeDocumentId(treeUri)
         val stack = ArrayDeque<Pair<String, String>>() // documentId to relative dir
         stack.addLast(rootId to "")
@@ -27,7 +32,9 @@ object LibraryScanner {
         while (stack.isNotEmpty()) {
             val (docId, rel) = stack.removeLast()
             val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
-            context.contentResolver.query(children, cols, null, null, null)?.use { c ->
+            val cursor = context.contentResolver.query(children, cols, null, null, null)
+                ?: throw IllegalStateException("Can't read this folder — choose it again")
+            cursor.use { c ->
                 while (c.moveToNext()) {
                     val id = c.getString(0)
                     val name = c.getString(1) ?: continue
@@ -35,19 +42,20 @@ object LibraryScanner {
                     if (name.startsWith(".")) continue
                     val path = if (rel.isEmpty()) name else "$rel/$name"
                     if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        folders++
                         stack.addLast(id to path)
-                    } else if (name.substringAfterLast('.', "").lowercase() in AUDIO_EXT) {
+                    } else if (name.substringAfterLast('.', "").lowercase() in AUDIO_EXT || mime.startsWith("audio/")) {
                         out += FoundFile(
                             DocumentsContract.buildDocumentUriUsingTree(treeUri, id), path, name,
                             if (c.isNull(3)) 0 else c.getLong(3), if (c.isNull(4)) 0 else c.getLong(4),
                         )
                         if (out.size % 25 == 0) onFound(out.size)
-                    }
+                    } else other++
                 }
             }
         }
         onFound(out.size)
-        return out.sortedBy { it.relativePath.lowercase() }
+        return ScanResult(out.sortedBy { it.relativePath.lowercase() }, other, folders)
     }
 
     /** Stable id: survives rescans and moving the phone's folder, changes if the file changes. */
