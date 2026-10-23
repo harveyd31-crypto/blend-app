@@ -141,19 +141,21 @@ class BlendRepository(private val context: Context) {
 
     /** Rescans the folder. Without [force], skips if it was scanned in the last few minutes. */
     fun rescan(force: Boolean = true) {
-        val folder = _settings.value.musicFolderUri ?: return
+        val folder = _settings.value.musicFolderUri
         if (scanJob?.isActive == true) return
         // An empty library is always worth another look (e.g. files copied after choosing the folder).
         if (!force && _tracks.value.isNotEmpty() && System.currentTimeMillis() - lastScan < 5 * 60_000) return
         lastScan = System.currentTimeMillis()
         scanJob = scope.launch {
             _progress.update { it.copy(scanning = true, found = 0, scanError = null) }
+            val imported = withContext(Dispatchers.IO) { runCatching { LibraryScanner.scanImported(context) }.getOrDefault(emptyList()) }
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    LibraryScanner.scan(context, Uri.parse(folder)) { n -> _progress.update { p -> p.copy(found = n) } }
+                    if (folder == null) com.harvey.blend.library.ScanResult(emptyList(), 0, 0)
+                    else LibraryScanner.scan(context, Uri.parse(folder)) { n -> _progress.update { p -> p.copy(found = n) } }
                 }
             }
-            val scan = result.getOrNull()
+            val scan = result.getOrNull()?.let { it.copy(audio = it.audio + imported) }
             if (scan == null) {
                 val err = result.exceptionOrNull()
                 _progress.update {
@@ -164,7 +166,7 @@ class BlendRepository(private val context: Context) {
                 }
                 return@launch
             }
-            _progress.update { it.copy(lastScanAudio = scan.audio.size, lastScanOther = scan.otherFiles) }
+            _progress.update { it.copy(lastScanAudio = scan.audio.size - imported.size, lastScanOther = scan.otherFiles) }
             val found = scan.audio
             val existing = _tracks.value
             val now = System.currentTimeMillis()
@@ -188,6 +190,37 @@ class BlendRepository(private val context: Context) {
             _progress.update { it.copy(scanning = false) }
             scheduleSave()
             wakeAnalysis()
+        }
+    }
+
+    /**
+     * Copies songs the user picked (Downloads, Drive, another app…) into Blend's own storage,
+     * so they work without choosing a music folder.
+     */
+    fun importSongs(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        scope.launch {
+            _progress.update { it.copy(scanning = true, found = 0, scanError = null) }
+            val dir = LibraryScanner.importDir(context)
+            var done = 0
+            withContext(Dispatchers.IO) {
+                for (u in uris) {
+                    runCatching {
+                        val name = context.contentResolver.query(u, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                            ?: "Song ${System.currentTimeMillis()}.mp3"
+                        val safe = name.replace(Regex("[/\\\\:*?\"<>|]"), "_")
+                        val target = java.io.File(dir, safe)
+                        if (!target.exists()) {
+                            context.contentResolver.openInputStream(u)?.use { ins -> target.outputStream().use { ins.copyTo(it) } }
+                        }
+                        done++
+                        _progress.update { p -> p.copy(found = done) }
+                    }
+                }
+            }
+            _progress.update { it.copy(scanning = false) }
+            rescan(force = true)
         }
     }
 

@@ -157,12 +157,17 @@ class TrackAnalyzer {
             mid[i] = restBelow3k - l
             high[i] = samples[i] - restBelow3k
         }
+        // "Melodic" band (300 Hz–3.5 kHz, steep filters): chords, vocals and leads, without the bass
+        // that would make a breakdown look like an outro.
+        val hp1 = Biquad.highPass(300.0, sr); val hp2 = Biquad.highPass(300.0, sr)
+        val lp1 = Biquad.lowPass(3500.0, sr); val lp2 = Biquad.lowPass(3500.0, sr)
+        val melodic = FloatArray(samples.size) { i -> lp2.process(lp1.process(hp2.process(hp1.process(samples[i])))) }
         val barMid = DoubleArray(bars)
         val barAll = DoubleArray(bars)
         for (b in 0 until bars) {
             val a = ((firstDownbeat + b * barSec) * sr).toInt()
             val e = min(samples.size, ((firstDownbeat + (b + 1) * barSec) * sr).toInt())
-            barMid[b] = rmsDb(mid, a, e)
+            barMid[b] = rmsDb(melodic, a, e)
             barAll[b] = rmsDb(samples, a, e)
         }
         val (mixOutBar, mixOutConf) = findOutro(barMid, barAll)
@@ -334,7 +339,11 @@ class TrackAnalyzer {
         return best
     }
 
-    /** Returns (bar index of the outro start, confidence). Phrases are 8 bars long. */
+    /**
+     * Returns (bar index of the outro start, confidence). Phrases are 8 bars long.
+     * The outro is a phrase line in the second half where the melodic content drops and the track
+     * never comes back up afterwards — a breakdown followed by another drop is not an outro.
+     */
     private fun findOutro(barMid: DoubleArray, barAll: DoubleArray): Pair<Int, Double> {
         val bars = barMid.size
         val minRemaining = 16
@@ -348,13 +357,28 @@ class TrackAnalyzer {
                 val after = mean(barMid, c, min(bars, c + 8))
                 val beforeAll = mean(barAll, c - 8, c)
                 val afterAll = mean(barAll, c, min(bars, c + 8))
-                val s = (before - after) + 0.5 * (beforeAll - afterAll)
-                if (s > bestScore) { bestScore = s; bestBar = c }
+                // Does the track build back up later? Then this is a breakdown, not the outro.
+                var laterAll = -200.0
+                var laterMid = -200.0
+                var k = c + 8
+                while (k + 8 <= bars) {
+                    laterAll = max(laterAll, mean(barAll, k, k + 8))
+                    laterMid = max(laterMid, mean(barMid, k, k + 8))
+                    k += 8
+                }
+                val comesBack = laterAll > afterAll + 2.5 || laterMid > after + 2.5
+                // Melody relative to the whole mix: drops when the chords/vocals stop while the beat
+                // keeps going (a mixable outro), but not when everything simply fades to silence.
+                val share = (before - beforeAll) - (after - afterAll)
+                val s = share + 0.5 * (beforeAll - afterAll).coerceIn(0.0, 3.0)
+                // The beat coming back after a breakdown (louder than before) is a drop, not an outro.
+                val isDrop = afterAll > beforeAll + 1.5
+                if (!comesBack && !isDrop && s > bestScore) { bestScore = s; bestBar = c }
             }
             c += 8
         }
         if (bestScore < 1.5) return fallback to 0.3
-        return bestBar to (0.4 + bestScore / 12).coerceAtMost(0.98)
+        return bestBar to (0.4 + bestScore / 8).coerceAtMost(0.98)
     }
 
     private fun estimateKey(samples: FloatArray): Pair<MusicalKey?, Double> {
@@ -406,6 +430,29 @@ class TrackAnalyzer {
         }
         val conf = (0.5 + (best - second) * 4).coerceIn(0.0, 0.99)
         return bestKey to conf
+    }
+
+    /** RBJ biquad filter. */
+    private class Biquad(private val b0: Double, private val b1: Double, private val b2: Double, private val a1: Double, private val a2: Double) {
+        private var x1 = 0.0; private var x2 = 0.0; private var y1 = 0.0; private var y2 = 0.0
+        fun process(xf: Float): Float {
+            val x = xf.toDouble()
+            val y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = x; y2 = y1; y1 = y
+            return y.toFloat()
+        }
+        companion object {
+            private fun make(f: Double, sr: Int, high: Boolean): Biquad {
+                val w = 2 * Math.PI * f / sr
+                val alpha = kotlin.math.sin(w) / (2 * 0.7071)
+                val c = kotlin.math.cos(w)
+                val a0 = 1 + alpha
+                return if (high) Biquad((1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - alpha) / a0)
+                else Biquad((1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - alpha) / a0)
+            }
+            fun highPass(f: Double, sr: Int) = make(f, sr, true)
+            fun lowPass(f: Double, sr: Int) = make(f, sr, false)
+        }
     }
 
     private class OnePole(cutoff: Double, sr: Int) {

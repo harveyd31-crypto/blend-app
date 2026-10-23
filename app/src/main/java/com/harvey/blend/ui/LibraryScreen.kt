@@ -1,5 +1,7 @@
 package com.harvey.blend.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,6 +27,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
@@ -73,6 +76,8 @@ fun LibraryScreen(
     val queue by repo.queue.collectAsState()
     var filter by rememberSaveable(initialFilter) { mutableStateOf(initialFilter) }
     var showCreate by remember { mutableStateOf(false) }
+    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> repo.importSongs(uris) }
+    val importSongs = { importer.launch(arrayOf("audio/*")) }
 
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -81,6 +86,7 @@ fun LibraryScreen(
             }
             Spacer(Modifier.width(12.dp))
             Text(if (filter == LibraryFilter.SMART_SETS && initialFilter == LibraryFilter.SMART_SETS) "Set maker" else "Your Library", style = Type.title, color = Color.White, modifier = Modifier.weight(1f))
+            RoundIconButton(Icons.Rounded.LibraryAdd, "Import songs", size = 44.dp) { importSongs() }
             RoundIconButton(Icons.Rounded.Search, "Search", size = 44.dp) { nav.push(Dest.Search) }
             RoundIconButton(Icons.Rounded.Add, "New playlist or smart set", size = 44.dp) { showCreate = true }
         }
@@ -93,12 +99,17 @@ fun LibraryScreen(
 
         if (progress.active) AnalysisCard(progress, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
 
-        if (settings.musicFolderUri == null) {
+        if (settings.musicFolderUri == null && tracks.isEmpty() && !progress.scanning) {
             EmptyHint(
-                "Choose your music folder",
-                "Copy your music (AIFF, WAV, FLAC, MP3, M4A) to a folder on the phone, then pick it here. Blend reads the files where they are and analyses BPM, key, energy and cue points.",
+                "Add your music",
+                "Import songs from Downloads, Drive or anywhere on the phone (AIFF, WAV, FLAC, MP3, M4A) — or choose a folder that holds your whole library. Blend analyses BPM, key, energy and cue points.",
                 Modifier.fillMaxWidth(),
-            ) { PrimaryButton("Choose folder", onClick = onPickFolder) }
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PrimaryButton("Import songs", onClick = importSongs)
+                    PrimaryButton("Choose folder", color = Color.White, onClick = onPickFolder)
+                }
+            }
             return@Column
         }
 
@@ -112,8 +123,8 @@ fun LibraryScreen(
             }
             EmptyHint("No music found yet", body, Modifier.fillMaxWidth()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PrimaryButton("Rescan") { repo.rescan() }
-                    PrimaryButton("Choose another folder", color = Color.White, onClick = onPickFolder)
+                    PrimaryButton("Import songs", onClick = importSongs)
+                    PrimaryButton("Rescan", color = Color.White) { repo.rescan() }
                 }
             }
             return@Column
@@ -177,7 +188,7 @@ fun AnalysisCard(p: com.harvey.blend.LibraryProgress, modifier: Modifier = Modif
     ) {
         Icon(Icons.Rounded.GraphicEq, null, tint = Blend.Blue)
         Column(Modifier.weight(1f)) {
-            val title = if (p.scanning) "Scanning folder… ${p.found} files" else "Analysing ${p.toAnalyze - p.analyzed} tracks"
+            val title = if (p.scanning) "Adding music… ${p.found} files" else "Analysing ${p.toAnalyze - p.analyzed} tracks"
             Text(title, style = Type.bodySmall.copy(fontWeight = FontWeight.SemiBold), color = Color.White)
             Spacer(Modifier.height(6.dp))
             LinearProgressIndicator(

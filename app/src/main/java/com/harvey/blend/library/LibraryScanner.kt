@@ -58,6 +58,14 @@ object LibraryScanner {
         return ScanResult(out.sortedBy { it.relativePath.lowercase() }, other, folders)
     }
 
+    /** Songs imported with the Import button, copied into the app's own storage. */
+    fun importDir(context: Context) = java.io.File(context.filesDir, "music").apply { mkdirs() }
+
+    fun scanImported(context: Context): List<FoundFile> =
+        importDir(context).walkTopDown().filter { it.isFile && it.extension.lowercase() in AUDIO_EXT }.map { f ->
+            FoundFile(Uri.fromFile(f), "Imported/" + f.relativeTo(importDir(context)).path, f.name, f.length(), f.lastModified())
+        }.sortedBy { it.relativePath.lowercase() }.toList()
+
     /** Stable id: survives rescans and moving the phone's folder, changes if the file changes. */
     fun idFor(relativePath: String, size: Long): String {
         val md = MessageDigest.getInstance("SHA-1").digest("$relativePath|$size".toByteArray())
