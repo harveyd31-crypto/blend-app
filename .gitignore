@@ -8,4 +8,5 @@ build/
 .externalNativeBuild
 .cxx
 *.apk
+!app/blend-release.jks
 !gradle/wrapper/gradle-wrapper.jar

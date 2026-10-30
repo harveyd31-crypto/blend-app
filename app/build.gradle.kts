@@ -12,15 +12,29 @@ android {
         applicationId = "com.harvey.blend"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Every GitHub build gets a higher number, so a new APK installs as an update.
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+        versionName = "0.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+    }
+
+    signingConfigs {
+        // Personal signing key kept in the (private) repo: every build has the same signature,
+        // so updates install over the previous version without losing the library.
+        create("blend") {
+            storeFile = file("blend-release.jks")
+            storePassword = "blendapp"
+            keyAlias = "blend"
+            keyPassword = "blendapp"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Signed with the debug key so the release APK installs directly on your phone.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("blend")
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("blend")
         }
     }
 
