@@ -37,6 +37,9 @@ data class MixState(
     val transitionLength: Double = 0.0,
     val nextReady: Boolean = false,
     val nextId: String? = null,
+    /** Whether the running/last transition is tempo-matched, and the beat-lock nudge it applied. */
+    val beatMatched: Boolean = true,
+    val phaseShiftMs: Int = 0,
 )
 
 /**
@@ -90,6 +93,7 @@ class MixCore(
     private var transBars = 8
     private var inTransition = false
     private var beatMatched = true
+    private var phaseShiftMs = 0
     @Volatile var style: TransitionStyle = TransitionStyle.BASS_SWAP
     @Volatile var bars: Int = 8
 
@@ -182,12 +186,22 @@ class MixCore(
         val bpmA = (a.track?.bpm ?: 120.0) * a.rate
         val bpmB = nt.bpm
         beatMatched = false
-        if (bpmB != null) {
+        phaseShiftMs = 0
+        if (bpmB != null && a.track?.bpm != null) {
             val f = listOf(0.5, 1.0, 2.0).minBy { abs(ln(bpmA / (bpmB * it))) }
             val r = bpmA / (bpmB * f)
-            if (abs(r - 1) <= 0.08) { b.rate = r; beatMatched = true }
+            if (abs(r - 1) <= MAX_TEMPO_CHANGE) { b.rate = r; beatMatched = true }
         }
         b.rateTarget = b.rate
+        if (beatMatched) {
+            // Lock by ear: line up the incoming kick drums with the outgoing ones.
+            val a0 = a.pcm
+            if (a0 != null) {
+                val lagMs = BeatLock.lagMs(a0, a.posSec(), a.rate, np, nt.mixIn, b.rate, 60.0 / bpmA)
+                phaseShiftMs = lagMs
+                b.pos += lagMs / 1000.0 * b.rate * np.sampleRate
+            }
+        }
         nextTrack = null; nextPcm = null
         inTransition = true
     }
@@ -329,7 +343,14 @@ class MixCore(
             transitionLength = transLenSec,
             nextReady = nextPcm != null,
             nextId = nextTrack?.id,
+            beatMatched = beatMatched,
+            phaseShiftMs = phaseShiftMs,
         )
+    }
+
+    companion object {
+        /** Largest tempo change (±10 %) used to match the incoming track to the outgoing one. */
+        const val MAX_TEMPO_CHANGE = 0.10
     }
 
     /** RBJ low-pass at 180 Hz (Q 0.707): splits off the bass for the EQ moves. */

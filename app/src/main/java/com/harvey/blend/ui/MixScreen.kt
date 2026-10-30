@@ -214,6 +214,15 @@ private fun TransitionPanel(cur: Track, next: Track?, mix: MixState, pos: Double
             val s = com.harvey.blend.setmaker.SetMaker.score(cur, next)
             Text(s.describe(cur, next), style = Type.num.copy(fontSize = Type.caption.fontSize), color = if (s.risky) Blend.Yellow else Blend.Green)
         }
+        val bpmGap = next?.bpm?.let { nb -> cur.bpm?.let { cb -> kotlin.math.abs(nb / cb - 1) } }
+        val lockText = when {
+            next != null && !next.isAnalyzed -> "Analysing the next track — the mix is planned as soon as its BPM is known."
+            p != null && mix.beatMatched -> "Beat-locked on the kick drums" + if (mix.phaseShiftMs != 0) " (nudged ${"%+d".format(mix.phaseShiftMs)} ms)" else ""
+            p != null -> "Tempos too far apart to match — blending with a filter fade instead."
+            bpmGap != null && bpmGap > 0.10 && bpmGap < 0.9 -> "Tempos are ${(bpmGap * 100).toInt()}% apart — too far to beat-match; Blend will filter-fade."
+            else -> "Tempo-matched and beat-locked when the mix starts."
+        }
+        Text(lockText, style = Type.caption.copy(fontWeight = FontWeight.SemiBold), color = if (p != null && !mix.beatMatched) Blend.Yellow else Blend.Green)
         Text("Tap the top waveform to jump. The bass of the next track comes in halfway through the mix.", style = Type.caption, color = Blend.Dim)
     }
 }

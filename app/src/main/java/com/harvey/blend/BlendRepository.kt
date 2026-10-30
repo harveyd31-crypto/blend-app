@@ -282,11 +282,11 @@ class BlendRepository(private val context: Context) {
 
     private val analysisWake = MutableStateFlow(0)
     private fun wakeAnalysis() { analysisWake.update { it + 1 } }
-    private val priority = MutableStateFlow<Set<String>>(emptySet())
+    private val priority = MutableStateFlow<List<String>>(emptyList())
     private val tagged = HashSet<String>()
 
     /** Analyse these first (e.g. tracks of the playlist being played). */
-    fun prioritize(ids: Collection<String>) { priority.value = ids.toSet(); wakeAnalysis() }
+    fun prioritize(ids: Collection<String>) { priority.value = ids.distinct(); wakeAnalysis() }
 
     private fun startAnalysisQueue() {
         scope.launch(Dispatchers.Default) {
@@ -300,7 +300,7 @@ class BlendRepository(private val context: Context) {
                     }
                     if (pending.isEmpty()) { _progress.update { it.copy(current = null) }; break }
                     val pr = priority.value
-                    val next = pending.minWith(compareBy<Track>({ it.id !in pr }, { it.addedAt }, { it.relativePath }))
+                    val next = pending.minWith(compareBy<Track>({ pr.indexOf(it.id).let { i -> if (i < 0) Int.MAX_VALUE else i } }, { it.addedAt }, { it.relativePath }))
                     _progress.update { it.copy(current = next.title) }
                     analyzeOne(next)
                 }
@@ -521,6 +521,13 @@ class BlendRepository(private val context: Context) {
             val nt = nid?.let { _tracks.value[it] }
             if (nt == null || !_settings.value.autoMix) {
                 engine.setNext(null, null); return@launch
+            }
+            // Never mix into a track whose BPM and beat grid aren't known yet: analyse it first
+            // (it jumps the queue), and the mix is planned as soon as the result arrives.
+            if (!nt.isAnalyzed && nt.analysisError == null) {
+                engine.setNext(null, null)
+                prioritize(listOf(nt.id) + q.ids)
+                return@launch
             }
             val pcm = pcmFor(nt) ?: run { engine.setNext(null, null); return@launch }
             engine.setNext(deckTrack(_tracks.value[nt.id] ?: nt), pcm)
